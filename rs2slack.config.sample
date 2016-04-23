@@ -1,6 +1,7 @@
 [eyes]
 keyword = xxx
 slack_token = xxx
+# can be found at https://api.slack.com/methods/channels.list/test
 slack_channel_id = xxx
 
 [loggers]
