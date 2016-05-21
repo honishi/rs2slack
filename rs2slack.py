@@ -8,6 +8,7 @@ import time
 import urllib.parse
 
 import lxml.html
+import redis
 import requests
 from slackclient import SlackClient
 
@@ -17,11 +18,10 @@ REALTIME_PREFIX = "http://realtime.search.yahoo.co.jp/search?p="
 REALTIME_SUFFIX = "&ei=UTF-8"
 XPATH_TWEET = "//*[@id=\"TSm\"]/div/div/p[1]/a[2]"
 CRAWL_INTERVAL = 60
-TWEET_HISTORY_MAX_LENGTH = 200
+REDIS_HASH_NAME = "tweet-history"
 
 
 class RealtimeSearchToSlack(object):
-    tweet_history = []
 
     # magic methods
     def __init__(self):
@@ -30,14 +30,20 @@ class RealtimeSearchToSlack(object):
         cp = configparser.ConfigParser()
         cp.read(CONFIG_FILE)
 
-        section = "eyes"
+        section = "rs2slack"
         self.keyword = cp.get(section, "keyword")
+        self.redis_host = cp.get(section, "redis_host")
+        self.redis_port = cp.getint(section, "redis_port")
+        self.redis_db = cp.getint(section, "redis_db")
         self.slack_token = cp.get(section, "slack_token")
         self.slack_channel_id = cp.get(section, "slack_channel_id")
 
-        logging.debug("keyword: {0}".format(self.keyword))
-        logging.debug("slack_token: {0}".format(self.slack_token))
-        logging.debug("slack_channel_id: {0}".format(self.slack_channel_id))
+        logging.debug("keyword:{0}".format(self.keyword))
+        logging.debug("redis_host:{0}".format(self.redis_host))
+        logging.debug("redis_port:{0}".format(self.redis_port))
+        logging.debug("redis_db:{0}".format(self.redis_db))
+        logging.debug("slack_token:{0}".format(self.slack_token))
+        logging.debug("slack_channel_id:{0}".format(self.slack_channel_id))
 
     # public methods
     def start(self):
@@ -80,18 +86,21 @@ class RealtimeSearchToSlack(object):
         return [element.get('href') for element in elements]
 
     def should_post(self, url):
-        known_tweet = url in self.tweet_history
-        return not known_tweet
+        return not self.redis_client().hexists(REDIS_HASH_NAME, url)
 
     def update_tweet_history(self, url):
         if isinstance(url, list):
-            self.tweet_history = url
-            return
+            urls = url
+        else:
+            urls = [url]
 
-        self.tweet_history.append(url)
+        redis = self.redis_client()
 
-        if TWEET_HISTORY_MAX_LENGTH < len(self.tweet_history):
-            self.tweet_history.pop(0)
+        for u in urls:
+            redis.hset(REDIS_HASH_NAME, u, 1)
+
+    def redis_client(self):
+        return redis.Redis(host=self.redis_host, port=self.redis_port, db=self.redis_db)
 
     def post_slack(self, token, channel, url):
         sc = SlackClient(token)
